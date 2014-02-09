@@ -250,7 +250,8 @@ class WAInterface(threading.Thread):
             time.sleep(0.1)
 
 if __name__ == "__main__":
-    config = json.load(open('config'))
+    with open('config') as configfile:
+        config = json.load(configfile)
     username = config['username']
     password = config['password']
     bot = WAInterface(username, password, lambda: print("stopped"))
