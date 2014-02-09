@@ -38,25 +38,25 @@ onMessage s m = do
     msg = B.unpack $ mMsg m
     nick = B.unpack . fromJust $ mNick m
 
-toIRC = do
-  resp <- liftIO $ connect
-          (mkDefaultConfig "irc.rizon.net" "MuhBot")
-          { cChannels = map (B.unpack.fst) chans
-          , cEvents   = [(Privmsg onMessage)]} True False
+toIRC config = do
+  resp <- liftIO $ connect config True False
 
-  awaitForever $ \m@Message{..} ->
-    case resp of
-      Left error -> (liftIO $ putStrLn $ show error)
-                    >> yield m
-      Right mirc -> do
+  case resp of
+    Left error -> do
+      liftIO $ putStrLn $ show error
+      awaitForever $ \m -> yield m
+
+    Right mirc -> do
+      awaitForever $ \m@Message{..} -> do
         when (take 5 kind == "group") $
           liftIO $ sendMessage mirc m
         yield m
+
   where
     sendMessage mirc Message{..} = do
-      let chanName = lookup chan $ map (\(a,b) -> (b,a)) chans
+      let mname = lookup chan $ map (\(a,b) -> (b,a)) chans
 
-      case chanName of
+      case mname of
         Just name -> do
           let nick = fromMaybe jid pushName
           let content = "<" ++ nick ++ "> " ++ msg
@@ -65,9 +65,13 @@ toIRC = do
         Nothing -> return ()
 
 main = do
+  let config = (mkDefaultConfig "irc.rizon.net" "MuhBot")
+               { cChannels = map (B.unpack.fst) chans
+               , cEvents   = [(Privmsg onMessage)]}
+
   runResourceT $
     sourceBeanstalk "127.0.0.1" "14711" "recv"
     $= toRecord
-    $= toIRC
+    $= toIRC config
     $= CL.map (\(m :: Message) -> B.pack $ show m)
     $$ CB.sinkHandle stdout
