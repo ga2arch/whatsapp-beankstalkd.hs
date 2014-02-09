@@ -1,6 +1,7 @@
-{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE OverloadedStrings,
+             RecordWildCards,
+             ScopedTypeVariables #-}
 
-import Control.Applicative
 import Control.Concurrent hiding (yield)
 import Control.Concurrent.STM.TBMChan
 import Data.Maybe
@@ -11,7 +12,7 @@ import Data.Aeson
 import Data.Conduit
 import Data.Conduit.Process.Unix
 import Data.Conduit.TMChan
-import Network.Beanstalk
+
 import Network.SimpleIRC
 import System.IO
 
@@ -21,37 +22,9 @@ import qualified Data.ByteString.Lazy.Char8 as BL
 import qualified Data.Conduit.Binary as CB
 import qualified Data.Conduit.List as CL
 
-data Message = Message
-               { jid :: String
-               , chan :: String
-               , pushName :: Maybe String
-               , time :: Maybe String
-               , msg :: String
-               , kind :: String
-               } deriving Show
+import Utils
+import Types
 
-instance FromJSON Message where
-  parseJSON (Object v) =
-    Message <$>
-    v .: "jid" <*>
-    v .: "chan" <*>
-    v .:? "pushName" <*>
-    v .:? "time" <*>
-    v .: "msg" <*>
-    v .: "kind"
-
-  parseJSON _ = mzero
-
-data SendMessage = SendMessage
-                   { target :: String
-                   , text :: String
-                   } deriving Show
-
-instance ToJSON SendMessage where
-  toJSON (SendMessage target text) =
-    object ["target" .= target, "text" .= text]
-
---onMessage :: EventFunc
 onMessage s m = do
   when (chan == "#compagnia3") $ do
     let j = encode $ SendMessage
@@ -64,28 +37,30 @@ onMessage s m = do
     msg = B.unpack $ mMsg m
     nick = B.unpack . fromJust $ mNick m
 
-sourceBeanstalk hostname port tube = do
-  s <- liftIO $ connectBeanstalk hostname port
-  liftIO $ watchTube s tube
-  forever $ (liftIO $ reserveJob s) >>= yield.job_body
-
-sinkBeanstalk hostname port tube = do
-  s <- liftIO $ connectBeanstalk hostname port
-  liftIO $ useTube s tube
-  awaitForever $ \d -> (liftIO $ putJob s 0 0 10 d) >> return ()
-
-conduitAeson :: (Monad m) => Conduit BI.ByteString m Message
-conduitAeson =
-  awaitForever $ yield . fromJust . decodeStrict
+toIRC mirc =
+  awaitForever $ \m@Message{..} -> do
+    when (take 5 kind == "group") $
+      liftIO $ sendMessage mirc m
+    return m
+  where
+    sendMessage mirc Message{..} = do
+      let nick = fromMaybe jid pushName
+      let content = "<" ++ nick ++ "> " ++ msg
+      sendMsg mirc "#compagnia3" $ B.pack content
 
 main = do
-  forkIO $ runResourceT $ sourceBeanstalk "127.0.0.1" "14711" "recv"
-    $= conduitAeson
-    $= CL.map (B.pack . show)
-    $$ CB.sinkHandle stdout
+  resp <- connect
+          (mkDefaultConfig "irc.rizon.net" "MuhBot2")
+          { cChannels = ["#compagnia3"]
+          , cEvents   = [(Privmsg onMessage)]} True False
 
-  (Right mirc) <- connect
-                  (mkDefaultConfig "irc.rizon.net" "MuhBot2")
-                  { cChannels = ["#compagnia3"]
-                  , cEvents   = [(Privmsg onMessage)]} False False
+  case resp of
+    Left error -> putStrLn $ show error
+    Right mirc -> runResourceT $
+                  sourceBeanstalk "127.0.0.1" "14711" "recv"
+                  $= toRecord
+                  $= toIRC mirc
+                  $= CL.map (\(m :: Message) -> B.pack $ show m)
+                  $$ CB.sinkHandle stdout
+
   return ()
