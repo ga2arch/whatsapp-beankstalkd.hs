@@ -3,20 +3,14 @@
              ScopedTypeVariables #-}
 
 import Control.Concurrent hiding (yield)
-import Control.Concurrent.STM.TBMChan
 import Data.Maybe
-import Control.Monad.STM
 import Control.Monad
 import Control.Monad.IO.Class
 import Data.Aeson
 import Data.Conduit
-import Data.Conduit.Process.Unix
-import Data.Conduit.TMChan
-
 import Network.SimpleIRC
 import System.IO
 
-import qualified Data.ByteString.Internal as BI
 import qualified Data.ByteString.Char8 as B
 import qualified Data.ByteString.Lazy.Char8 as BL
 import qualified Data.Conduit.Binary as CB
@@ -25,42 +19,55 @@ import qualified Data.Conduit.List as CL
 import Utils
 import Types
 
+chans = [("#canaleprova", "393935167969-1391363587@g.us")]
+        --,("#compagnia2", "393477436444-1382908121@g.us")]
+
 onMessage s m = do
-  when (chan == "#compagnia3") $ do
-    let j = encode $ SendMessage
-            "393935167969-1391363587@g.us"
-            (nick ++ ": " ++ msg)
-    yield (head $ BL.toChunks j)
-      $$ sinkBeanstalk  "127.0.0.1" "14711" "send"
+  let mjid = lookup chan chans
+
+  case mjid of
+    Just jid -> do
+      let j = encode $
+              SendMessage jid  (nick ++ ": " ++ msg)
+      yield (head $ BL.toChunks j)
+        $$ sinkBeanstalk  "127.0.0.1" "14711" "send"
+
+    Nothing -> return ()
   where
     chan = fromJust $ mChan m
     msg = B.unpack $ mMsg m
     nick = B.unpack . fromJust $ mNick m
 
-toIRC mirc =
-  awaitForever $ \m@Message{..} -> do
-    when (take 5 kind == "group") $
-      liftIO $ sendMessage mirc m
-    return m
-  where
-    sendMessage mirc Message{..} = do
-      let nick = fromMaybe jid pushName
-      let content = "<" ++ nick ++ "> " ++ msg
-      sendMsg mirc "#compagnia3" $ B.pack content
-
-main = do
-  resp <- connect
-          (mkDefaultConfig "irc.rizon.net" "MuhBot2")
-          { cChannels = ["#compagnia3"]
+toIRC = do
+  resp <- liftIO $ connect
+          (mkDefaultConfig "irc.rizon.net" "MuhBot")
+          { cChannels = map (B.unpack.fst) chans
           , cEvents   = [(Privmsg onMessage)]} True False
 
-  case resp of
-    Left error -> putStrLn $ show error
-    Right mirc -> runResourceT $
-                  sourceBeanstalk "127.0.0.1" "14711" "recv"
-                  $= toRecord
-                  $= toIRC mirc
-                  $= CL.map (\(m :: Message) -> B.pack $ show m)
-                  $$ CB.sinkHandle stdout
+  awaitForever $ \m@Message{..} ->
+    case resp of
+      Left error -> (liftIO $ putStrLn $ show error)
+                    >> yield m
+      Right mirc -> do
+        when (take 5 kind == "group") $
+          liftIO $ sendMessage mirc m
+        yield m
+  where
+    sendMessage mirc Message{..} = do
+      let chanName = lookup chan $ map (\(a,b) -> (b,a)) chans
 
-  return ()
+      case chanName of
+        Just name -> do
+          let nick = fromMaybe jid pushName
+          let content = "<" ++ nick ++ "> " ++ msg
+          sendMsg mirc name $ B.pack content
+
+        Nothing -> return ()
+
+main = do
+  runResourceT $
+    sourceBeanstalk "127.0.0.1" "14711" "recv"
+    $= toRecord
+    $= toIRC
+    $= CL.map (\(m :: Message) -> B.pack $ show m)
+    $$ CB.sinkHandle stdout
