@@ -249,14 +249,14 @@ class WAInterface(threading.Thread):
                 raise Exception("bot does not intend to connect")
             time.sleep(0.1)
 
-def main:
+def main():
     try:
         with open('config') as configfile:
-        config = json.load(configfile)
-        username = config['username']
-        password = config['password']
-        bot = WAInterface(username, password, lambda: print("stopped"))
-        bot.run()
+            config = json.load(configfile)
+            username = config['username']
+            password = config['password']
+            bot = WAInterface(username, password, lambda: print("stopped"))
+            bot.run()
     except: pass
 
 if __name__ == "__main__":
