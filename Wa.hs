@@ -1,8 +1,10 @@
 {-# LANGUAGE OverloadedStrings,
              RecordWildCards,
-             ScopedTypeVariables #-}
+             ScopedTypeVariables
+             #-}
 
 import Control.Concurrent hiding (yield)
+import Control.Exception
 import Data.Maybe
 import Control.Monad
 import Control.Monad.IO.Class
@@ -19,8 +21,9 @@ import qualified Data.Conduit.List as CL
 import Utils
 import Types
 
-chans = [("#canaleprova", "393935167969-1391363587@g.us")]
-        --,("#compagnia2", "393477436444-1382908121@g.us")]
+chans = [("#canaleprova", "393935167969-1391363587@g.us")
+        ,("#compagnia2", "393477436444-1382908121@g.us")
+        ,("#canea", "393477436444-1365363106@g.us")]
 
 onMessage s m = do
   let mjid = lookup chan chans
@@ -28,7 +31,7 @@ onMessage s m = do
   case mjid of
     Just jid -> do
       let j = encode $
-              SendMessage jid  (nick ++ ": " ++ msg)
+              SendMessage jid  ("<" ++ nick ++ "> " ++ msg)
       yield (head $ BL.toChunks j)
         $$ sinkBeanstalk  "127.0.0.1" "14711" "send"
 
@@ -75,3 +78,5 @@ main = do
     $= toIRC config
     $= CL.map (\(m :: Message) -> B.pack $ show m)
     $$ CB.sinkHandle stdout
+
+  `catch` \(e :: SomeException) -> main
